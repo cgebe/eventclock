@@ -15,3 +15,4 @@
 ^\.claude$
 ^vignettes/articles$
 ^Rplots\.pdf$
+^python$

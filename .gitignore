@@ -10,3 +10,10 @@ inst/doc
 .DS_Store
 CLAUDE.md
 Rplots.pdf
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+python/build/
+python/dist/
