@@ -3,6 +3,7 @@ import pytest
 
 from eventclock import (
     as_event_prices,
+    ec_signature,
     event_clock,
     event_clock_forecast,
     event_clock_path,
@@ -107,3 +108,14 @@ def test_event_clock_forecast(load_fixture, name):
     assert warns == fx["warnings"]
     assert msgs == r_messages(fx)
     assert_frame_parity(res, fx["output"]["table"])
+
+
+@pytest.mark.parametrize("name", ["sig_brexit", "sig_pm2024"])
+def test_ec_signature(load_fixture, name):
+    fx = load_fixture(name)
+    res, warns, msgs = record_all(ec_signature, build_input(fx), **py_args(fx["args"]))
+    assert warns == fx["warnings"]
+    assert msgs == r_messages(fx)
+    exp = fx["output"]["table"]
+    assert_frame_parity(res, exp)
+    assert res.attrs["market_id"] == exp.attrs.get("market_id")

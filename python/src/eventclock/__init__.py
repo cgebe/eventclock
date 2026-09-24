@@ -4,6 +4,7 @@ from .datasets import load_dataset
 from .event_prices import EventPrices, as_event_prices
 from .normalize import q_from_price
 from .params import ec_default_params
+from .signature import ec_signature
 
 __all__ = [
     "EventClockWarning",
@@ -12,6 +13,7 @@ __all__ = [
     "ec_default_params",
     "ec_ilogit",
     "ec_logit",
+    "ec_signature",
     "event_clock",
     "event_clock_forecast",
     "event_clock_path",
