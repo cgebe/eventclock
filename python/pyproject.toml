@@ -28,5 +28,6 @@ packages = ["src/eventclock"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["-ra", "--strict-markers"]
 xfail_strict = true

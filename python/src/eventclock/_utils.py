@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import warnings
 from typing import Any, Literal
 
 import numpy as np
@@ -17,6 +18,10 @@ Side = Literal["start", "end"]
 
 class EventClockWarning(UserWarning):
     pass
+
+
+def ec_warn(msg: str) -> None:
+    warnings.warn(msg, EventClockWarning, stacklevel=3)
 
 
 def ec_logit(q: Any) -> Any:
@@ -102,3 +107,20 @@ def align_bound(
         ).as_unit("ns")
         return out + END_OF_DAY if side == "end" else out
     raise ValueError(f"A window bound must be a date or a datetime, got {type(bound).__name__}.")
+
+
+def r_format_time(values: Any, time_kind: TimeKind) -> list[str | None]:
+    s = pd.to_datetime(pd.Series(values))
+    fmt = "%Y-%m-%d"
+    if time_kind == "instant":
+        ok = s.dropna()
+        midnight = (
+            (ok.dt.hour == 0)
+            & (ok.dt.minute == 0)
+            & (ok.dt.second == 0)
+            & (ok.dt.microsecond == 0)
+            & (ok.dt.nanosecond == 0)
+        ).all()
+        if not midnight:
+            fmt = "%Y-%m-%d %H:%M:%S"
+    return [None if pd.isna(v) else v.strftime(fmt) for v in s]
