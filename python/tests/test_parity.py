@@ -10,6 +10,7 @@ from eventclock import (
     event_clock_path,
     format_validation,
     load_dataset,
+    pm_daily,
 )
 from helpers import (
     assert_frame_parity,
@@ -134,3 +135,19 @@ def test_ec_validate(load_fixture, name):
     assert msgs == r_messages(fx)
     assert_frame_parity(res, fx["output"]["table"])
     assert format_validation(res).splitlines() == fx["output"]["printed"]
+
+
+@pytest.mark.parametrize("name", ["daily_pm2024", "daily_pm2024_utc"])
+def test_pm_daily(load_fixture, name):
+    fx = load_fixture(name)
+    res, warns, msgs = record_all(pm_daily, build_input(fx), **py_args(fx["args"]))
+    assert warns == fx["warnings"]
+    assert msgs == r_messages(fx)
+    out = fx["output"]
+    exp = out["event_prices"]
+    assert_frame_parity(res.data, exp)
+    assert res.time_kind == out["time_kind"]
+    assert res.clip == tuple(exp.attrs["clip"])
+    assert res.market_id == exp.attrs.get("market_id")
+    assert res.event_date == exp.attrs.get("event_date")
+    assert_frame_parity(res.summary(), out["summary"])
