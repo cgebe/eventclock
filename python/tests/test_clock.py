@@ -5,7 +5,14 @@ import pandas as pd
 import pytest
 from scipy.special import expit, logit
 
-from eventclock import EventClockWarning, as_event_prices, event_clock, load_dataset
+from eventclock import (
+    EventClockWarning,
+    as_event_prices,
+    event_clock,
+    event_clock_forecast,
+    event_clock_path,
+    load_dataset,
+)
 from eventclock.clock import gap_stats, window_increments, window_rows
 from helpers import record_warnings
 
@@ -217,3 +224,136 @@ def test_window_helpers(ep_brexit):
     assert w.n_obs == 8
     assert len(w.dL) == 2
     assert w.max_gap_days == 3.0
+
+
+def test_forecast_reproduces_the_paper_numbers(ep_us, ep_brexit):
+    fus = event_clock_forecast(ep_us, at=dt.date(2016, 10, 10), horizon={"1W": 7, "2W": 14})
+    a1w = fus.loc[fus["horizon"] == "1W", "A_forecast"].item()
+    a2w = fus.loc[fus["horizon"] == "2W", "A_forecast"].item()
+    assert a1w == pytest.approx(0.06809, abs=1e-4)
+    assert a2w == pytest.approx(0.13618, abs=1e-4)
+    assert abs(a1w - 0.068) < 1.1e-3
+    assert abs(a2w - 0.135) < 1.5e-3
+    assert fus["n_incr"].unique().tolist() == [39]
+
+    fgb = event_clock_forecast(ep_brexit, at=dt.date(2016, 5, 24), horizon={"1W": 7, "2W": 14})
+    assert fgb.loc[fgb["horizon"] == "1W", "A_forecast"].item() == pytest.approx(0.0439927, abs=1e-4)
+    assert fgb.loc[fgb["horizon"] == "2W", "A_forecast"].item() == pytest.approx(0.0879854, abs=1e-4)
+    assert fgb["A_forecast"].iloc[1] / fgb["A_forecast"].iloc[0] == pytest.approx(2, rel=1e-15)
+
+    fd = event_clock_forecast(ep_us, at=dt.date(2016, 10, 10), horizon=dt.date(2016, 10, 17))
+    assert fd["horizon_days"].item() == 7
+    assert fd["A_forecast"].item() == a1w
+    assert fd["horizon"].item() == "2016-10-17"
+
+
+def test_forecast_on_the_constructed_series():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), list(expit(np.arange(5) * 0.1))))
+    f = event_clock_forecast(ep, horizon=8, trailing=5)
+    assert f["A_forecast"].item() == pytest.approx(0.04 / 4 * 8, rel=1e-12)
+    assert f["horizon"].item() == "8d"
+    assert f["at"].item() == pd.Timestamp("2020-01-05")
+
+
+def test_path_is_a_consistent_cumulative_clock(ep_brexit):
+    path = event_clock_path(ep_brexit)
+    assert list(path.columns) == ["time", "q", "L", "dL", "dA", "A", "A_frac", "cal_frac"]
+    assert len(path) == 119
+    assert np.isnan(path["dL"].iloc[0])
+    assert path["A"].iloc[0] == 0
+    full = event_clock(ep_brexit, methods="rv")["A"].item()
+    assert path["A"].iloc[-1] == pytest.approx(full, rel=1e-12)
+    assert path["A_frac"].iloc[-1] == 1
+    assert path["cal_frac"].iloc[0] == 0
+    assert path["cal_frac"].iloc[-1] == 1
+    assert (np.diff(path["A"]) >= 0).all()
+    assert path.attrs == {"market_id": "Brexit: Leave", "event_date": dt.date(2016, 6, 23)}
+
+
+def test_clock_functions_validate_inputs():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), [0.5]))
+    with pytest.raises(ValueError, match="at least 2"):
+        event_clock_path(ep)
+    with pytest.raises(ValueError, match="at least 2") as e:
+        event_clock_forecast(ep, horizon=7)
+    assert str(e.value) == 'Need at least 2 non-missing observations up to "2020-01-01".'
+    ep2 = as_event_prices(dated(dt.date(2020, 1, 1), [0.5] * 5))
+    with pytest.raises(ValueError, match="strictly after"):
+        event_clock_forecast(ep2, horizon=-1)
+    with pytest.raises(ValueError, match="strictly after"):
+        event_clock_forecast(ep2, horizon=dt.date(2020, 1, 5))
+
+
+def test_forecast_gap_diagnostics(ep_us):
+    f = event_clock_forecast(ep_us, at=dt.date(2016, 10, 10), horizon=7)
+    assert f["n_gaps"].item() == 0
+    assert f["max_gap_days"].item() == 1.0
+
+
+def test_path_respects_date_bounds_on_ny_series():
+    t = pd.Series([pd.Timestamp("2020-01-01 12:00", tz=NY) + pd.Timedelta(days=i) for i in range(5)])
+    ep = as_event_prices(pd.DataFrame({"time": t, "q": [0.40, 0.45, 0.50, 0.55, 0.60]}))
+    path = event_clock_path(ep, from_=dt.date(2020, 1, 2), to=dt.date(2020, 1, 4))
+    assert len(path) == 3
+    assert str(path["time"].dt.tz) == NY
+
+
+def test_path_options():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), [0.5] * 4))
+    path = event_clock_path(ep)
+    assert path["A"].iloc[-1] == 0
+    assert path["A_frac"].isna().all()
+    assert list(event_clock_path(ep, normalize=False).columns) == ["time", "q", "L", "dL", "dA", "A"]
+    assert len(event_clock_path(ep, sample_every=2)) == 2
+    with pytest.raises(ValueError, match="at least 2"):
+        event_clock_path(ep, sample_every=4)
+    with pytest.raises(ValueError, match="single value"):
+        event_clock_path(ep, to=[dt.date(2020, 1, 2), dt.date(2020, 1, 3)])
+    assert len(event_clock_path(ep, to=[dt.date(2020, 1, 2)])) == 2
+
+
+def test_path_skips_na_with_a_warning():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), [0.5, np.nan, 0.6]))
+    path, warns = record_warnings(event_clock_path, ep)
+    assert len(path) == 2
+    assert len(warns) == 1
+    assert warns[0].startswith("1 missing observation inside the window skipped")
+
+
+def test_forecast_horizon_labels():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), list(expit(np.arange(5) * 0.1))))
+    f = event_clock_forecast(ep, horizon=[7, 7.5, 100000])
+    assert f["horizon"].tolist() == ["7d", "7.5d", "1e+05d"]
+    f = event_clock_forecast(ep, horizon={"a": 7, "": 3})
+    assert f["horizon"].tolist() == ["a", "3d"]
+    f = event_clock_forecast(ep, horizon={"a": dt.date(2020, 1, 12), "": dt.date(2020, 1, 8)})
+    assert f["horizon"].tolist() == ["a", "3d"]
+    assert f["horizon_days"].tolist() == [7.0, 3.0]
+    f = event_clock_forecast(ep, horizon=[dt.date(2020, 1, 12), dt.date(2020, 1, 8)])
+    assert f["horizon"].tolist() == ["2020-01-12", "2020-01-08"]
+
+
+def test_forecast_trailing_and_subsampling():
+    ep = as_event_prices(dated(dt.date(2020, 1, 1), list(expit(np.arange(9) * 0.1))))
+    f = event_clock_forecast(ep, horizon=1, trailing=3)
+    assert f["n_incr"].item() == 2
+    assert f["trailing"].item() == 3
+    assert f["A_forecast"].item() == pytest.approx(0.02 / 2, rel=1e-12)
+    f = event_clock_forecast(ep, horizon=1, trailing=9, sample_every=4)
+    assert f["n_incr"].item() == 2
+    assert f["A_forecast"].item() == pytest.approx(2 * 0.16 / 8, rel=1e-12)
+    with pytest.raises(ValueError, match="zero calendar span"):
+        event_clock_forecast(ep, horizon=1, trailing=1)
+    with pytest.raises(ValueError, match="`trailing` must"):
+        event_clock_forecast(ep, horizon=1, trailing=0)
+
+
+def test_forecast_instant_series_and_horizons():
+    ep = as_event_prices(load_dataset("polymarket2024"))
+    at = pd.Timestamp("2024-10-01 12:00", tz="UTC")
+    f = event_clock_forecast(ep, at=at, horizon=pd.Timestamp("2024-10-02 00:00", tz="UTC"))
+    assert f["horizon_days"].item() == 0.5
+    assert f["horizon"].item() == "2024-10-02"
+    assert f["at"].item() == at
+    f2 = event_clock_forecast(ep, at=at, horizon=dt.date(2024, 10, 2))
+    assert f2["horizon_days"].item() == 0.5

@@ -128,3 +128,15 @@ def r_format_time(values: Any, time_kind: TimeKind) -> list[str | None]:
         if not midnight:
             fmt = "%Y-%m-%d %H:%M:%S"
     return [None if pd.isna(v) else v.strftime(fmt) for v in s]
+
+
+def r_num_str(x: float) -> str:
+    if np.isnan(x):
+        return "NaN"
+    if np.isinf(x):
+        return "Inf" if x > 0 else "-Inf"
+    target = float(f"{x:.15g}")
+    n = next(k for k in range(1, 16) if float(f"{x:.{k}g}") == target)
+    sci = f"{target:.{n - 1}e}"
+    fixed = np.format_float_positional(target, trim="-")
+    return sci if len(fixed) > len(sci) else fixed

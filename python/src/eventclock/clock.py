@@ -19,6 +19,7 @@ from ._utils import (
     is_instant,
     r_format_time,
     r_mad,
+    r_num_str,
 )
 from .event_prices import EventPrices, as_event_prices
 from .kernels import (
@@ -251,3 +252,138 @@ def event_clock(
             out[c] = out[c].astype("float64")
     return out
 
+
+
+def single_value(v: Any, name: str) -> Any:
+    if isinstance(v, dict):
+        v = list(v.values())
+    if isinstance(v, (list, tuple, np.ndarray, pd.Series, pd.Index)):
+        if len(v) != 1:
+            raise ValueError(f"`{name}` must be a single value.")
+        return list(v)[0]
+    return v
+
+
+def event_clock_path(
+    x: Any,
+    from_: Any = None,
+    to: Any = None,
+    sample_every: int = DEFAULTS["sample_every"],
+    clip: tuple[float, float] | None = None,
+    normalize: bool = True,
+) -> pd.DataFrame:
+    x = as_event_prices(x)
+    clip = clip if clip is not None else x.clip
+    if from_ is None:
+        from_ = native_time(x.time.min(), x.time_kind)
+    to = native_time(x.time.max(), x.time_kind) if to is None else single_value(to, "to")
+    sample_every = check_sample_every(sample_every)
+
+    d = window_rows(x, from_, to)
+    if len(d) >= 2:
+        d = d.iloc[::sample_every].reset_index(drop=True)
+    if len(d) < 2:
+        raise ValueError(
+            "Need at least 2 non-missing observations in the window (after subsampling)."
+        )
+
+    q = d["q"].to_numpy(dtype="float64")
+    L = ec_logit(clip_q(q, clip))
+    dL = np.concatenate([[np.nan], np.diff(L)])
+    dA = dL**2
+    A = np.cumsum(np.nan_to_num(dA, nan=0.0))
+    out = pd.DataFrame({"time": d["time"], "q": q, "L": L, "dL": dL, "dA": dA, "A": A})
+    if normalize:
+        total = A[-1]
+        out["A_frac"] = A / total if total > 0 else np.nan
+        days = ((out["time"] - out["time"].iloc[0]) / pd.Timedelta(days=1)).to_numpy(dtype="float64")
+        out["cal_frac"] = days / days[-1]
+    out.attrs = {"market_id": x.market_id, "event_date": x.event_date}
+    return out
+
+
+def _horizon_days(h: Any, at: Any) -> float:
+    if is_date(h) and is_date(at):
+        return (h - at).days * 1.0
+    h_ts = as_instant(pd.Timestamp(h)) if is_date(h) else as_instant(h)
+    at_ts = as_instant(pd.Timestamp(at)) if is_date(at) else as_instant(at)
+    return (h_ts - at_ts) / pd.Timedelta(days=1)
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, (bool, np.bool_))
+
+
+FORECAST_COLUMNS = [
+    "market_id", "at", "horizon", "horizon_days", "trailing",
+    "n_incr", "n_gaps", "max_gap_days", "A_forecast",
+]
+
+
+def event_clock_forecast(
+    x: Any,
+    at: Any = None,
+    horizon: Any = None,
+    trailing: int = DEFAULTS["trailing"],
+    sample_every: int = DEFAULTS["sample_every"],
+    clip: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    x = as_event_prices(x)
+    if horizon is None:
+        raise ValueError("`horizon` is required.")
+    clip = clip if clip is not None else x.clip
+    if at is None:
+        at = native_time(x.time.max(), x.time_kind)
+    if not trailing >= 1:
+        raise ValueError("`trailing` must be at least 1.")
+    trailing = int(trailing)
+    sample_every = check_sample_every(sample_every)
+
+    d = window_rows(x, native_time(x.time.min(), x.time_kind), at)
+    if len(d) < 2:
+        at_kind = "date" if is_date(at) else "instant"
+        raise ValueError(
+            f'Need at least 2 non-missing observations up to "{r_format_time([at], at_kind)[0]}".'
+        )
+    d = d.iloc[-trailing:].iloc[::sample_every].reset_index(drop=True)
+
+    L = ec_logit(clip_q(d["q"].to_numpy(dtype="float64"), clip))
+    rv = kernel_rv(np.diff(L))
+    n_gaps, max_gap_days = gap_stats(d["time"])
+    span_days = (d["time"].iloc[-1] - d["time"].iloc[0]) / pd.Timedelta(days=1)
+    if span_days <= 0:
+        raise ValueError("Trailing window has zero calendar span.")
+
+    names = [str(k) for k in horizon] if isinstance(horizon, dict) else None
+    if isinstance(horizon, dict):
+        values = list(horizon.values())
+    elif isinstance(horizon, (list, tuple, np.ndarray, pd.Series, pd.Index)):
+        values = list(horizon)
+    else:
+        values = [horizon]
+    if values and all(_is_number(v) for v in values):
+        h_days = [float(v) for v in values]
+        labels = names or [f"{r_num_str(h)}d" for h in h_days]
+    else:
+        kind = time_kind_of(values, "horizon")
+        h_days = [_horizon_days(v, at) for v in values]
+        labels = names or r_format_time(values, kind)
+    labels = [lab if lab != "" else f"{r_num_str(h)}d" for lab, h in zip(labels, h_days)]
+    if any(not h > 0 for h in h_days):
+        raise ValueError("`horizon` must lie strictly after `at`.")
+
+    k = len(values)
+    return pd.DataFrame(
+        {
+            "market_id": [x.market_id] * k,
+            "at": [column_time(at)] * k,
+            "horizon": labels,
+            "horizon_days": pd.Series(h_days, dtype="float64"),
+            "trailing": pd.Series([trailing] * k, dtype="int64"),
+            "n_incr": pd.Series([len(L) - 1] * k, dtype="int64"),
+            "n_gaps": pd.Series([n_gaps] * k, dtype="int64"),
+            "max_gap_days": pd.Series([max_gap_days] * k, dtype="float64"),
+            "A_forecast": pd.Series([rv / span_days * h for h in h_days], dtype="float64"),
+        },
+        columns=FORECAST_COLUMNS,
+    )

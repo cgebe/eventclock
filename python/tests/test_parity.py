@@ -1,7 +1,13 @@
 import pandas as pd
 import pytest
 
-from eventclock import as_event_prices, event_clock, load_dataset
+from eventclock import (
+    as_event_prices,
+    event_clock,
+    event_clock_forecast,
+    event_clock_path,
+    load_dataset,
+)
 from helpers import (
     assert_frame_parity,
     build_input,
@@ -74,6 +80,30 @@ CLOCK_FIXTURES = [
 def test_event_clock(load_fixture, name):
     fx = load_fixture(name)
     res, warns, msgs = record_all(event_clock, build_input(fx), **py_args(fx["args"]))
+    assert warns == fx["warnings"]
+    assert msgs == r_messages(fx)
+    assert_frame_parity(res, fx["output"]["table"])
+
+
+@pytest.mark.parametrize("name", ["path_brexit", "path_pm2024", "path_ny_datebounds"])
+def test_event_clock_path(load_fixture, name):
+    fx = load_fixture(name)
+    res, warns, msgs = record_all(event_clock_path, build_input(fx), **py_args(fx["args"]))
+    assert warns == fx["warnings"]
+    assert msgs == r_messages(fx)
+    exp = fx["output"]["table"]
+    assert_frame_parity(res, exp)
+    assert res.attrs["market_id"] == exp.attrs.get("market_id")
+    assert res.attrs["event_date"] == exp.attrs.get("event_date")
+
+
+FORECAST_FIXTURES = [f"forecast_{m}_t{t}" for m in ("brexit", "us") for t in (20, 40, 60)]
+
+
+@pytest.mark.parametrize("name", FORECAST_FIXTURES)
+def test_event_clock_forecast(load_fixture, name):
+    fx = load_fixture(name)
+    res, warns, msgs = record_all(event_clock_forecast, build_input(fx), **py_args(fx["args"]))
     assert warns == fx["warnings"]
     assert msgs == r_messages(fx)
     assert_frame_parity(res, fx["output"]["table"])
