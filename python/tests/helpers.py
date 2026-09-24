@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import logging
 import warnings
 from collections.abc import Callable
 from pathlib import Path
@@ -114,6 +115,42 @@ def record_warnings(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[
         warnings.simplefilter("always")
         result = fn(*args, **kwargs)
     return result, [str(w.message) for w in caught if issubclass(w.category, EventClockWarning)]
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+def record_all(
+    fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> tuple[Any, list[str], list[str]]:
+    logger = logging.getLogger("eventclock")
+    handler = _ListHandler()
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        result, warns = record_warnings(fn, *args, **kwargs)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+    return result, warns, handler.messages
+
+
+def r_messages(fx: dict) -> list[str]:
+    return [m.removeprefix("i ").removeprefix("\u2139 ") for m in fx["messages"]]
+
+
+R_ARG_NAMES = {"from": "from_"}
+
+
+def py_args(args: dict[str, Any]) -> dict[str, Any]:
+    return {R_ARG_NAMES.get(k, k): v for k, v in args.items()}
 
 
 def _is_time(s: pd.Series) -> bool:

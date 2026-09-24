@@ -271,3 +271,81 @@ def test_eventprices_is_frozen():
 def test_rejects_non_frames():
     with pytest.raises(ValueError, match="must be a DataFrame"):
         as_event_prices({"time": [1], "q": [0.5]})
+
+
+def test_r_port_shipped_dataset(ep_brexit):
+    assert list(ep_brexit.data.columns) == ["time", "q_raw", "q", "flag_na", "flag_clip"]
+    assert len(ep_brexit) == 119
+    assert ep_brexit.time_kind == "date"
+    assert ep_brexit.market_id == "Brexit: Leave"
+    assert ep_brexit.event_date == d(2016, 6, 23)
+    assert ep_brexit.clip == (0.01, 0.99)
+    q = ep_brexit.q[ep_brexit.time == pd.Timestamp("2016-05-24")]
+    assert q.item() == pytest.approx(0.202, abs=1e-6)
+
+
+def test_r_port_column_guessing():
+    x = pd.DataFrame({"date": pd.Series([d(2020, 1, i) for i in (1, 2, 3)], dtype=object),
+                      "price": [0.4, 0.5, 0.6]})
+    assert as_event_prices(x).q.tolist() == [0.4, 0.5, 0.6]
+    x2 = pd.DataFrame({"when": x["date"], "prob": [0.4, 0.5, 0.6]})
+    assert as_event_prices(x2, time="when", price="prob").q.tolist() == [0.4, 0.5, 0.6]
+    with pytest.raises(ValueError, match="Cannot guess"):
+        as_event_prices(x2)
+    with pytest.raises(ValueError, match="not found"):
+        as_event_prices(x, time="nope")
+
+
+def test_r_port_scale_discount_mid():
+    x = pd.DataFrame({"date": pd.Series([d(2020, 1, 1), d(2020, 1, 2)], dtype=object),
+                      "price": [40.0, 60.0]})
+    ep = as_event_prices(x, scale=100)
+    np.testing.assert_allclose(ep.q, [0.4, 0.6])
+    np.testing.assert_allclose(ep.data["q_raw"], [0.4, 0.6])
+    np.testing.assert_allclose(as_event_prices(x, scale=100, discount=0.99).q, np.array([0.4, 0.6]) / 0.99)
+    x2 = pd.DataFrame({"date": x["date"], "b": [0.39, 0.59], "a": [0.41, 0.61]})
+    np.testing.assert_allclose(as_event_prices(x2, bid="b", ask="a").q, [0.4, 0.6])
+
+
+def test_r_port_flag_dont_drop():
+    x = pd.DataFrame({"date": pd.Series([d(2020, 1, i) for i in range(1, 5)], dtype=object),
+                      "q": [0.005, 0.5, np.nan, 0.995]})
+    ep = as_event_prices(x)
+    assert len(ep) == 4
+    assert ep.data["flag_na"].tolist() == [False, False, True, False]
+    assert ep.data["flag_clip"].tolist() == [True, False, False, True]
+    assert as_event_prices(x, clip=(0.001, 0.999)).data["flag_clip"].sum() == 0
+
+
+def test_r_port_sort_and_dedupe():
+    x = pd.DataFrame({"date": pd.Series([d(2020, 1, 3), d(2020, 1, 1), d(2020, 1, 2)], dtype=object),
+                      "q": [0.6, 0.4, 0.5]})
+    assert as_event_prices(x).q.tolist() == [0.4, 0.5, 0.6]
+    x2 = pd.DataFrame({"date": pd.Series([d(2020, 1, 1), d(2020, 1, 1), d(2020, 1, 2)], dtype=object),
+                       "q": [0.4, 0.45, 0.5]})
+    ep2, warns = record_warnings(as_event_prices, x2)
+    assert any("duplicated timestamp" in w for w in warns)
+    assert len(ep2) == 2
+    assert ep2.q.tolist() == [0.4, 0.5]
+
+
+def test_r_port_character_dates_and_bad_time():
+    x = pd.DataFrame({"date": ["2020-01-01", "2020-01-02"], "q": [0.4, 0.5]})
+    assert len(as_event_prices(x)) == 2
+    with pytest.raises(ValueError, match="must be"):
+        as_event_prices(pd.DataFrame({"date": [1.0, 2.0], "q": [0.4, 0.5]}))
+
+
+def test_r_port_missing_timestamps():
+    x = pd.DataFrame({"date": pd.Series([d(2020, 1, 1), None, d(2020, 1, 3)], dtype=object),
+                      "q": [0.4, 0.5, 0.6]})
+    ep, warns = record_warnings(as_event_prices, x)
+    assert any("missing timestamp" in w for w in warns)
+    assert ep.q.tolist() == [0.4, 0.6]
+
+
+def test_r_port_idempotent_and_print(ep_brexit):
+    assert as_event_prices(ep_brexit) is ep_brexit
+    assert "Event prices" in repr(ep_brexit)
+    s = ep_brexit.summary()
+    assert len(s) == 1

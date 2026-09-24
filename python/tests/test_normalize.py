@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.special import logit
 
-from eventclock import EventClockWarning, q_from_price
+from eventclock import EventClockWarning, ec_ilogit, ec_logit, q_from_price
 from helpers import record_warnings
 
 
@@ -69,3 +70,34 @@ def test_zero_book_gives_inf_and_warns():
     with pytest.warns(EventClockWarning, match="1 normalized probability"):
         out = q_from_price([0.5], book=0.0, method="overround")
     assert out[0] == np.inf
+
+
+def test_r_port_discount():
+    assert q_from_price(0.5) == 0.5
+    assert q_from_price(0.495, discount=0.99) == pytest.approx(0.5, rel=1e-15)
+    np.testing.assert_allclose(q_from_price([0.49, 0.48], discount=[0.98, 0.96]), [0.5, 0.5])
+    with pytest.raises(ValueError, match="must lie in"):
+        q_from_price(0.5, discount=1.01)
+    with pytest.raises(ValueError, match="must lie in"):
+        q_from_price(0.5, discount=0)
+
+
+def test_r_port_overround():
+    assert q_from_price(0.52, book=1.04, method="overround") == pytest.approx(0.5, rel=1e-15)
+    with pytest.raises(ValueError, match="book"):
+        q_from_price(0.52, method="overround")
+
+
+def test_r_port_out_of_bounds():
+    with pytest.warns(EventClockWarning, match="outside"):
+        res = q_from_price(1.05)
+    assert res == 1.05
+    _, warns = record_warnings(q_from_price, [0.2, np.nan, 0.8])
+    assert warns == []
+
+
+def test_r_port_logit():
+    q = np.array([0.195, 0.5, 0.9])
+    np.testing.assert_allclose(ec_logit(q), logit(q))
+    np.testing.assert_allclose(ec_ilogit(ec_logit(q)), q)
+    assert ec_logit(0.195) == pytest.approx(-1.4178431, abs=1e-6)

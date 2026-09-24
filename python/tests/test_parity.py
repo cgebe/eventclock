@@ -1,8 +1,16 @@
 import pandas as pd
 import pytest
 
-from eventclock import as_event_prices, load_dataset
-from helpers import assert_frame_parity, build_input, fixture_names, record_warnings
+from eventclock import as_event_prices, event_clock, load_dataset
+from helpers import (
+    assert_frame_parity,
+    build_input,
+    fixture_names,
+    py_args,
+    r_messages,
+    record_all,
+    record_warnings,
+)
 
 SOURCE_SHA = "30781dd48a691dbdb253b6c10463e3b2d1731aed"
 FIXTURES = fixture_names()
@@ -46,3 +54,26 @@ def test_rows_inputs_build(load_fixture, name):
     is_instant = pd.api.types.is_datetime64_any_dtype(rows["time"].dtype)
     assert ep.time_kind == ("instant" if is_instant else "date")
     assert_frame_parity(ep.data[["time", "q_raw"]].rename(columns={"q_raw": "q"}), rows[["time", "q"]])
+
+
+CLOCK_FIXTURES = [
+    "clock_brexit",
+    "clock_us",
+    "clock_brexit_se",
+    "clock_brexit_k2",
+    "clock_brexit_k3",
+    "clock_brexit_k5",
+    "clock_pm2024",
+    "clock_pm2024_datebounds",
+    "clock_ny_datebounds",
+    "clock_gaps",
+]
+
+
+@pytest.mark.parametrize("name", CLOCK_FIXTURES)
+def test_event_clock(load_fixture, name):
+    fx = load_fixture(name)
+    res, warns, msgs = record_all(event_clock, build_input(fx), **py_args(fx["args"]))
+    assert warns == fx["warnings"]
+    assert msgs == r_messages(fx)
+    assert_frame_parity(res, fx["output"]["table"])
