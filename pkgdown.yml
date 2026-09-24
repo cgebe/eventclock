@@ -1,0 +1,11 @@
+pandoc: 3.8.3
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles:
+  eventclock-brexit: eventclock-brexit.html
+  eventclock-event-betas: eventclock-event-betas.html
+  eventclock-validation: eventclock-validation.html
+last_built: 2026-09-24T13:26Z
+urls:
+  reference: https://www.sebastianstoeckl.com/eventclock/reference
+  article: https://www.sebastianstoeckl.com/eventclock/articles
