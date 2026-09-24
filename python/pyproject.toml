@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "eventclock"
 version = "0.1.0.dev0"
 description = "Python port of the eventclock R package: information time from prediction-market prices"
+readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
