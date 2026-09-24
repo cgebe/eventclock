@@ -5,6 +5,7 @@ from .event_prices import EventPrices, as_event_prices
 from .normalize import q_from_price
 from .params import ec_default_params
 from .signature import ec_signature
+from .validate import ec_validate, format_validation
 
 __all__ = [
     "EventClockWarning",
@@ -14,9 +15,11 @@ __all__ = [
     "ec_ilogit",
     "ec_logit",
     "ec_signature",
+    "ec_validate",
     "event_clock",
     "event_clock_forecast",
     "event_clock_path",
+    "format_validation",
     "load_dataset",
     "q_from_price",
 ]
