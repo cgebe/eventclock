@@ -20,6 +20,10 @@ class EventClockWarning(UserWarning):
     pass
 
 
+def as_rng(rng: np.random.Generator | int | None) -> np.random.Generator:
+    return rng if isinstance(rng, np.random.Generator) else np.random.default_rng(rng)
+
+
 def ec_warn(msg: str) -> None:
     warnings.warn(msg, EventClockWarning, stacklevel=3)
 
