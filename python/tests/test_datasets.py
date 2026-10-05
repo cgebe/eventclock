@@ -57,6 +57,19 @@ def test_fomc_column_types():
     assert df["sep"].dtype == bool
 
 
+def test_fomc_calendar_is_consistent():
+    df = load_dataset("fomc_meetings")
+    assert len(df) == 56
+    assert df["year"].value_counts().unique().tolist() == [8]
+    assert df["sep"].sum() == 28
+    dates = set(df["decision_date"])
+    assert dt.date(2024, 9, 18) in dates
+    assert dt.date(2024, 11, 7) in dates
+    assert dt.date(2026, 9, 16) in dates
+    sep24 = df.loc[(df["year"] == 2024) & df["sep"], "decision_date"]
+    assert [d.strftime("%m") for d in sep24] == ["03", "06", "09", "12"]
+
+
 @pytest.mark.parametrize("name", ["brexit2016", "us2016", "djt2024", "polymarket2024"])
 def test_value_columns_are_float64(name):
     df = load_dataset(name)
